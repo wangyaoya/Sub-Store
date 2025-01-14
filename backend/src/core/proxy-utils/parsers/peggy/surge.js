@@ -30,13 +30,18 @@ const grammars = String.raw`
             }
         }
     }
+    function handleShadowTLS() {
+        if (proxy['shadow-tls-password'] && !proxy['shadow-tls-version']) {
+            proxy['shadow-tls-version'] = 2;
+        }
+    }
 }
 
-start = (shadowsocks/vmess/trojan/https/http/snell/socks5/socks5_tls/tuic/tuic_v5/wireguard/hysteria2) {
+start = (shadowsocks/vmess/trojan/https/http/snell/socks5/socks5_tls/tuic/tuic_v5/wireguard/hysteria2/ssh/direct) {
     return proxy;
 }
 
-shadowsocks = tag equals "ss" address (method/passwordk/obfs/obfs_host/obfs_uri/ip_version/no_error_alert/fast_open/udp_relay/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+shadowsocks = tag equals "ss" address (method/passwordk/obfs/obfs_host/obfs_uri/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/no_error_alert/fast_open/udp_relay/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/udp_port/others)* {
     proxy.type = "ss";
     // handle obfs
     if (obfs.type == "http" || obfs.type === "tls") {
@@ -45,8 +50,9 @@ shadowsocks = tag equals "ss" address (method/passwordk/obfs/obfs_host/obfs_uri/
         $set(proxy, "plugin-opts.host", obfs.host);
         $set(proxy, "plugin-opts.path", obfs.path);
     }
+    handleShadowTLS();
 }
-vmess = tag equals "vmess" address (vmess_uuid/vmess_aead/ws/ws_path/ws_headers/method/ip_version/no_error_alert/tls/sni/tls_fingerprint/tls_verification/fast_open/udp_relay/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+vmess = tag equals "vmess" address (vmess_uuid/vmess_aead/ws/ws_path/ws_headers/method/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/no_error_alert/tls/sni/tls_fingerprint/tls_verification/fast_open/udp_relay/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
     proxy.type = "vmess";
     proxy.cipher = proxy.cipher || "none";
     if (proxy.aead) {
@@ -55,19 +61,27 @@ vmess = tag equals "vmess" address (vmess_uuid/vmess_aead/ws/ws_path/ws_headers/
         proxy.alterId = proxy.alterId || 0;
     }
     handleWebsocket();
+    handleShadowTLS();
 }
-trojan = tag equals "trojan" address (passwordk/ws/ws_path/ws_headers/tls/sni/tls_fingerprint/tls_verification/ip_version/no_error_alert/fast_open/udp_relay/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+trojan = tag equals "trojan" address (passwordk/ws/ws_path/ws_headers/tls/sni/tls_fingerprint/tls_verification/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/no_error_alert/fast_open/udp_relay/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
     proxy.type = "trojan";
     handleWebsocket();
+    handleShadowTLS();
 }
-https = tag equals "https" address (username password)? (usernamek passwordk)? (sni/tls_fingerprint/tls_verification/ip_version/no_error_alert/fast_open/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+https = tag equals "https" address (username password)? (usernamek passwordk)? (sni/tls_fingerprint/tls_verification/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/no_error_alert/fast_open/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
     proxy.type = "http";
     proxy.tls = true;
+    handleShadowTLS();
 }
-http = tag equals "http" address (username password)? (usernamek passwordk)? (ip_version/no_error_alert/fast_open/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+http = tag equals "http" address (username password)? (usernamek passwordk)? (ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/no_error_alert/fast_open/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
     proxy.type = "http";
+    handleShadowTLS();
 }
-snell = tag equals "snell" address (snell_version/snell_psk/obfs/obfs_host/obfs_uri/ip_version/no_error_alert/fast_open/udp_relay/reuse/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+ssh = tag equals "ssh" address (username password)? (usernamek passwordk)? (server_fingerprint/idle_timeout/private_key/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/no_error_alert/fast_open/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+    proxy.type = "ssh";
+    handleShadowTLS();
+}
+snell = tag equals "snell" address (snell_version/snell_psk/obfs/obfs_host/obfs_uri/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/no_error_alert/fast_open/udp_relay/reuse/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
     proxy.type = "snell";
     // handle obfs
     if (obfs.type == "http" || obfs.type === "tls") {
@@ -75,26 +89,36 @@ snell = tag equals "snell" address (snell_version/snell_psk/obfs/obfs_host/obfs_
         $set(proxy, "obfs-opts.host", obfs.host);
         $set(proxy, "obfs-opts.path", obfs.path);
     }
+    handleShadowTLS();
 }
-tuic = tag equals "tuic" address (alpn/token/ip_version/no_error_alert/tls_verification/sni/fast_open/tfo/ecn/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+tuic = tag equals "tuic" address (alpn/token/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/no_error_alert/tls_fingerprint/tls_verification/sni/fast_open/tfo/ecn/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/port_hopping_interval/others)* {
     proxy.type = "tuic";
+    handleShadowTLS();
 }
-tuic_v5 = tag equals "tuic-v5" address (alpn/passwordk/uuidk/ip_version/no_error_alert/tls_verification/sni/fast_open/tfo/ecn/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+tuic_v5 = tag equals "tuic-v5" address (alpn/passwordk/uuidk/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/no_error_alert/tls_fingerprint/tls_verification/sni/fast_open/tfo/ecn/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/port_hopping_interval/others)* {
     proxy.type = "tuic";
     proxy.version = 5;
+    handleShadowTLS();
 }
-wireguard = tag equals "wireguard" (section_name/no_error_alert/ip_version/underlying_proxy/test_url/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+wireguard = tag equals "wireguard" (section_name/no_error_alert/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
     proxy.type = "wireguard-surge";
+    handleShadowTLS();
 }
-hysteria2 = tag equals "hysteria2" address (no_error_alert/ip_version/underlying_proxy/test_url/sni/tls_verification/passwordk/tls_fingerprint/download_bandwidth/ecn/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+hysteria2 = tag equals "hysteria2" address (no_error_alert/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/sni/tls_verification/passwordk/tls_fingerprint/download_bandwidth/ecn/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/port_hopping_interval/others)* {
     proxy.type = "hysteria2";
+    handleShadowTLS();
 }
-socks5 = tag equals "socks5" address (username password)? (usernamek passwordk)? (no_error_alert/ip_version/fast_open/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+socks5 = tag equals "socks5" address (username password)? (usernamek passwordk)? (udp_relay/no_error_alert/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/fast_open/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
     proxy.type = "socks5";
+    handleShadowTLS();
 }
-socks5_tls = tag equals "socks5-tls" address (username password)? (usernamek passwordk)? (no_error_alert/ip_version/sni/tls_fingerprint/tls_verification/fast_open/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
+socks5_tls = tag equals "socks5-tls" address (username password)? (usernamek passwordk)? (udp_relay/no_error_alert/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/sni/tls_fingerprint/tls_verification/fast_open/shadow_tls_version/shadow_tls_sni/shadow_tls_password/block_quic/others)* {
     proxy.type = "socks5";
     proxy.tls = true;
+    handleShadowTLS();
+}
+direct = tag equals "direct" (udp_relay/ip_version/underlying_proxy/tos/allow_other_interface/interface/test_url/test_udp/test_timeout/hybrid/no_error_alert/fast_open/block_quic/others)* {
+    proxy.type = "direct";
 }
 
 address = comma server:server comma port:port {
@@ -130,6 +154,8 @@ port = digits:[0-9]+ {
     }
 }
 
+port_hopping_interval = comma "port-hopping-interval" equals match:$[0-9]+ { proxy["hop-interval"] = parseInt(match.trim()); }
+
 username = & {
     let j = peg$currPos; 
     let start, end;
@@ -156,7 +182,13 @@ username = & {
 password = comma match:[^,]+ { proxy.password = match.join(""); }
 
 tls = comma "tls" equals flag:bool { proxy.tls = flag; }
-sni = comma "sni" equals sni:domain { proxy.sni = sni; }
+sni = comma "sni" equals sni:("off"/domain) { 
+    if (sni === "off") {
+        proxy["disable-sni"] = true;
+    } else {
+        proxy.sni = sni;
+    }
+}
 tls_verification = comma "skip-cert-verify" equals flag:bool { proxy["skip-cert-verify"] = flag; }
 tls_fingerprint = comma "server-cert-fingerprint-sha256" equals tls_fingerprint:$[^,]+ { proxy["tls-fingerprint"] = tls_fingerprint.trim(); }
 
@@ -164,14 +196,14 @@ snell_psk = comma "psk" equals match:[^,]+ { proxy.psk = match.join(""); }
 snell_version = comma "version" equals match:$[0-9]+ { proxy.version = parseInt(match.trim()); }
 
 usernamek = comma "username" equals match:[^,]+ { proxy.username = match.join(""); }
-passwordk = comma "password" equals match:[^,]+ { proxy.password = match.join(""); }
+passwordk = comma "password" equals match:[^,]+ { proxy.password = match.join("").replace(/^"(.*?)"$/, '$1').replace(/^'(.*?)'$/, '$1'); }
 vmess_uuid = comma "username" equals match:[^,]+ { proxy.uuid = match.join(""); }
 vmess_aead = comma "vmess-aead" equals flag:bool { proxy.aead = flag; }
 
 method = comma "encrypt-method" equals cipher:cipher {
     proxy.cipher = cipher;
 }
-cipher = ("aes-128-gcm"/"aes-192-gcm"/"aes-256-gcm"/"aes-128-cfb"/"aes-192-cfb"/"aes-256-cfb"/"aes-128-ctr"/"aes-192-ctr"/"aes-256-ctr"/"rc4-md5"/"xchacha20-ietf-poly1305"/"chacha20-ietf-poly1305"/"chacha20-ietf"/"chacha20-poly1305"/"chacha20"/"none");
+cipher = ("aes-128-cfb"/"aes-128-ctr"/"aes-128-gcm"/"aes-192-cfb"/"aes-192-ctr"/"aes-192-gcm"/"aes-256-cfb"/"aes-256-ctr"/"aes-256-gcm"/"bf-cfb"/"camellia-128-cfb"/"camellia-192-cfb"/"camellia-256-cfb"/"cast5-cfb"/"chacha20-ietf-poly1305"/"chacha20-ietf"/"chacha20-poly1305"/"chacha20"/"des-cfb"/"idea-cfb"/"none"/"rc2-cfb"/"rc4-md5"/"rc4"/"salsa20"/"seed-cfb"/"xchacha20-ietf-poly1305"/"2022-blake3-aes-128-gcm"/"2022-blake3-aes-256-gcm");
 
 ws = comma "ws" equals flag:bool { obfs.type = "ws"; }
 ws_headers = comma "ws-headers" equals headers:$[^,]+ {
@@ -190,7 +222,7 @@ obfs_host = comma "obfs-host" equals host:domain { obfs.host = host; };
 obfs_uri = comma "obfs-uri" equals path:uri { obfs.path = path }
 uri = $[^,]+
 
-udp_relay = comma "udp" equals flag:bool { proxy.udp = flag; }
+udp_relay = comma "udp-relay" equals flag:bool { proxy.udp = flag; }
 fast_open = comma "fast-open" equals flag:bool { proxy.tfo = flag; }
 reuse = comma "reuse" equals flag:bool { proxy.reuse = flag; }
 ecn = comma "ecn" equals flag:bool { proxy.ecn = flag; }
@@ -201,7 +233,17 @@ no_error_alert = comma "no-error-alert" equals match:[^,]+ { proxy["no-error-ale
 underlying_proxy = comma "underlying-proxy" equals match:[^,]+ { proxy["underlying-proxy"] = match.join(""); }
 download_bandwidth = comma "download-bandwidth" equals match:[^,]+ { proxy.down = match.join(""); }
 test_url = comma "test-url" equals match:[^,]+ { proxy["test-url"] = match.join(""); }
+test_udp = comma "test-udp" equals match:[^,]+ { proxy["test-udp"] = match.join(""); }
+test_timeout = comma "test-timeout" equals match:$[0-9]+ { proxy["test-timeout"] = parseInt(match.trim()); }
+tos = comma "tos" equals match:$[0-9]+ { proxy.tos = parseInt(match.trim()); }
+interface = comma "interface" equals match:[^,]+ { proxy.interface = match.join(""); }
+allow_other_interface = comma "allow-other-interface" equals flag:bool { proxy["allow-other-interface"] = flag; }
+hybrid = comma "hybrid" equals flag:bool { proxy.hybrid = flag; }
+idle_timeout = comma "idle-timeout" equals match:$[0-9]+ { proxy["idle-timeout"] = parseInt(match.trim()); }
+private_key = comma "private-key" equals match:[^,]+ { proxy["keystore-private-key"] = match.join("").replace(/^"(.*)"$/, '$1'); }
+server_fingerprint = comma "server-fingerprint" equals match:[^,]+ { proxy["server-fingerprint"] = match.join("").replace(/^"(.*)"$/, '$1'); }
 block_quic = comma "block-quic" equals match:[^,]+ { proxy["block-quic"] = match.join(""); }
+udp_port = comma "udp-port" equals match:$[0-9]+ { proxy["udp-port"] = parseInt(match.trim()); }
 shadow_tls_version = comma "shadow-tls-version" equals match:$[0-9]+ { proxy["shadow-tls-version"] = parseInt(match.trim()); }
 shadow_tls_sni = comma "shadow-tls-sni" equals match:[^,]+ { proxy["shadow-tls-sni"] = match.join(""); }
 shadow_tls_password = comma "shadow-tls-password" equals match:[^,]+ { proxy["shadow-tls-password"] = match.join(""); }

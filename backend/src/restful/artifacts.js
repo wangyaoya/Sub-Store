@@ -19,6 +19,8 @@ export default function register($app) {
     if (!$.read(ARTIFACTS_KEY)) $.write({}, ARTIFACTS_KEY);
 
     // RESTful APIs
+    $app.get('/api/artifacts/restore', restoreArtifacts);
+
     $app.route('/api/artifacts')
         .get(getAllArtifacts)
         .post(createArtifact)
@@ -28,6 +30,73 @@ export default function register($app) {
         .get(getArtifact)
         .patch(updateArtifact)
         .delete(deleteArtifact);
+}
+
+async function restoreArtifacts(_, res) {
+    $.info('开始恢复远程配置...');
+    try {
+        const { gistToken, syncPlatform } = $.read(SETTINGS_KEY);
+        if (!gistToken) {
+            return Promise.reject('未设置 GitHub Token！');
+        }
+        const manager = new Gist({
+            token: gistToken,
+            key: ARTIFACT_REPOSITORY_KEY,
+            syncPlatform,
+        });
+
+        try {
+            const gist = await manager.locate();
+            if (!gist?.files) {
+                throw new Error(`找不到 Sub-Store Gist 文件列表`);
+            }
+            const allArtifacts = $.read(ARTIFACTS_KEY);
+            const failed = [];
+            Object.keys(gist.files).map((key) => {
+                const filename = gist.files[key]?.filename;
+                if (filename) {
+                    if (encodeURIComponent(filename) !== filename) {
+                        $.error(`文件名 ${filename} 未编码 不保存`);
+                        failed.push(filename);
+                    } else {
+                        const artifact = findByName(allArtifacts, filename);
+                        if (artifact) {
+                            updateByName(allArtifacts, filename, {
+                                ...artifact,
+                                url: gist.files[key]?.raw_url.replace(
+                                    /\/raw\/[^/]*\/(.*)/,
+                                    '/raw/$1',
+                                ),
+                            });
+                        } else {
+                            allArtifacts.push({
+                                name: `${filename}`,
+                                url: gist.files[key]?.raw_url.replace(
+                                    /\/raw\/[^/]*\/(.*)/,
+                                    '/raw/$1',
+                                ),
+                            });
+                        }
+                    }
+                }
+            });
+            $.write(allArtifacts, ARTIFACTS_KEY);
+        } catch (err) {
+            $.error(`查找 Sub-Store Gist 时发生错误: ${err.message ?? err}`);
+            throw err;
+        }
+        success(res);
+    } catch (e) {
+        $.error(`恢复远程配置失败，原因：${e.message ?? e}`);
+        failed(
+            res,
+            new InternalServerError(
+                `FAILED_TO_RESTORE_ARTIFACTS`,
+                `Failed to restore artifacts`,
+                `Reason: ${e.message ?? e}`,
+            ),
+        );
+    }
 }
 
 function getAllArtifacts(req, res) {
@@ -140,6 +209,12 @@ async function deleteArtifact(req, res) {
             files[encodeURIComponent(artifact.name)] = {
                 content: '',
             };
+            if (encodeURIComponent(artifact.name) !== artifact.name) {
+                files[artifact.name] = {
+                    content: '',
+                };
+            }
+
             // 当别的Sub 删了同步订阅 或 gist里面删了 当前设备没有删除 时 无法删除的bug
             try {
                 await syncToGist(files);
@@ -169,15 +244,34 @@ function validateArtifactName(name) {
 }
 
 async function syncToGist(files) {
-    const { gistToken } = $.read(SETTINGS_KEY);
+    const { gistToken, syncPlatform } = $.read(SETTINGS_KEY);
     if (!gistToken) {
-        return Promise.reject('未设置Gist Token！');
+        return Promise.reject('未设置 GitHub Token！');
     }
     const manager = new Gist({
         token: gistToken,
         key: ARTIFACT_REPOSITORY_KEY,
+        syncPlatform,
     });
-    return manager.upload(files);
+    const res = await manager.upload(files);
+    let body = {};
+    try {
+        body = JSON.parse(res.body);
+        // eslint-disable-next-line no-empty
+    } catch (e) {}
+
+    const url = body?.html_url ?? body?.web_url;
+    const settings = $.read(SETTINGS_KEY);
+    if (url) {
+        $.log(`同步 Gist 后, 找到 Sub-Store Gist: ${url}`);
+        settings.artifactStore = url;
+        settings.artifactStoreStatus = 'VALID';
+    } else {
+        $.error(`同步 Gist 后, 找不到 Sub-Store Gist`);
+        settings.artifactStoreStatus = 'NOT FOUND';
+    }
+    $.write(settings, SETTINGS_KEY);
+    return res;
 }
 
 export { syncToGist };

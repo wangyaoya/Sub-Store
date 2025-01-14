@@ -1,4 +1,4 @@
-import YAML from 'static-js-yaml';
+import YAML from '@/utils/yaml';
 
 function QXFilter() {
     const type = 'SINGLE';
@@ -10,6 +10,8 @@ function QXFilter() {
             'SRC-IP',
             'IN-PORT',
             'PROTOCOL',
+            'GEOSITE',
+            'GEOIP',
         ];
         if (UNSUPPORTED.indexOf(rule.type) !== -1) return null;
 
@@ -29,9 +31,12 @@ function QXFilter() {
 function SurgeRuleSet() {
     const type = 'SINGLE';
     const func = (rule) => {
+        const UNSUPPORTED = ['GEOSITE', 'GEOIP'];
+        if (UNSUPPORTED.indexOf(rule.type) !== -1) return null;
         let output = `${rule.type},${rule.content}`;
-        if (rule.type === 'IP-CIDR' || rule.type === 'IP-CIDR6') {
-            output += rule.options ? `,${rule.options[0]}` : '';
+        if (['IP-CIDR', 'IP-CIDR6'].includes(rule.type)) {
+            output +=
+                rule.options?.length > 0 ? `,${rule.options.join(',')}` : '';
         }
         return output;
     };
@@ -42,8 +47,14 @@ function LoonRules() {
     const type = 'SINGLE';
     const func = (rule) => {
         // skip unsupported rules
-        const UNSUPPORTED = ['DEST-PORT', 'SRC-IP', 'IN-PORT', 'PROTOCOL'];
+        const UNSUPPORTED = ['SRC-IP', 'GEOSITE', 'GEOIP'];
         if (UNSUPPORTED.indexOf(rule.type) !== -1) return null;
+        if (['IP-CIDR', 'IP-CIDR6'].includes(rule.type) && rule.options) {
+            // Loon only supports the no-resolve option
+            rule.options = rule.options.filter((option) =>
+                ['no-resolve'].includes(option),
+            );
+        }
         return SurgeRuleSet().func(rule);
     };
     return { type, func };
@@ -62,8 +73,17 @@ function ClashRuleProvider() {
                 let output = `${TRANSFORM[rule.type] || rule.type},${
                     rule.content
                 }`;
-                if (rule.type === 'IP-CIDR' || rule.type === 'IP-CIDR6') {
-                    output += rule.options ? `,${rule.options[0]}` : '';
+                if (['IP-CIDR', 'IP-CIDR6', 'GEOIP'].includes(rule.type)) {
+                    if (rule.options) {
+                        // Clash only supports the no-resolve option
+                        rule.options = rule.options.filter((option) =>
+                            ['no-resolve'].includes(option),
+                        );
+                    }
+                    output +=
+                        rule.options?.length > 0
+                            ? `,${rule.options.join(',')}`
+                            : '';
                 }
                 return output;
             }),

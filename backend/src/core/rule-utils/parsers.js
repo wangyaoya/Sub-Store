@@ -9,7 +9,9 @@ const RULE_TYPES_MAPPING = [
     [/^(IN|SRC)-PORT$/, 'IN-PORT'],
     [/^PROTOCOL$/, 'PROTOCOL'],
     [/^IP-CIDR$/i, 'IP-CIDR'],
-    [/^(IP-CIDR6|ip6-cidr|IP6-CIDR)$/],
+    [/^(IP-CIDR6|ip6-cidr|IP6-CIDR)$/, 'IP-CIDR6'],
+    [/^GEOIP$/i, 'GEOIP'],
+    [/^GEOSITE$/i, 'GEOSITE'],
 ];
 
 function AllRuleParser() {
@@ -37,8 +39,7 @@ function AllRuleParser() {
                             content: params[1],
                         };
                         if (
-                            rule.type === 'IP-CIDR' ||
-                            rule.type === 'IP-CIDR6'
+                            ['IP-CIDR', 'IP-CIDR6', 'GEOIP'].includes(rule.type)
                         ) {
                             rule.options = params.slice(2);
                         }

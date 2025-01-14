@@ -2,8 +2,6 @@
 import { ENV } from './open-api';
 
 export default function express({ substore: $, port, host }) {
-    port = port || 3000;
-    host = host || '::';
     const { isNode } = ENV();
     const DEFAULT_HEADERS = {
         'Content-Type': 'text/plain;charset=UTF-8',
@@ -11,6 +9,7 @@ export default function express({ substore: $, port, host }) {
         'Access-Control-Allow-Methods': 'POST,GET,OPTIONS,PATCH,PUT,DELETE',
         'Access-Control-Allow-Headers':
             'Origin, X-Requested-With, Content-Type, Accept',
+        'X-Powered-By': 'Sub-Store',
     };
 
     // node support
@@ -32,7 +31,7 @@ export default function express({ substore: $, port, host }) {
         app.start = () => {
             const listener = app.listen(port, host, () => {
                 const { address, port } = listener.address();
-                $.info(`Express started on ${address}:${port}`);
+                $.info(`[BACKEND] ${address}:${port}`);
             });
         };
         return app;
@@ -163,7 +162,7 @@ export default function express({ substore: $, port, host }) {
 
     function Response() {
         let statusCode = 200;
-        const { isQX, isLoon, isSurge } = ENV();
+        const { isQX, isLoon, isSurge, isGUIforCores } = ENV();
         const headers = DEFAULT_HEADERS;
         const STATUS_CODE_MAP = {
             200: 'HTTP/1.1 200 OK',
@@ -186,7 +185,7 @@ export default function express({ substore: $, port, host }) {
                     body,
                     headers,
                 };
-                if (isQX) {
+                if (isQX || isGUIforCores) {
                     $done(response);
                 } else if (isLoon || isSurge) {
                     $done({

@@ -30,7 +30,7 @@ start = (trojan) {
   return proxy
 }
 
-trojan = "trojan://" password:password "@" server:server ":" port:port params? name:name?{
+trojan = "trojan://" password:password "@" server:server ":" port:port "/"? params? name:name?{
   proxy.type = "trojan";
   proxy.password = password;
   proxy.server = server;
@@ -79,9 +79,11 @@ port = digits:[0-9]+ {
   }
 }
 
-params = "/"? "?" head:param tail:("&"@param)* {
+params = "?" head:param tail:("&"@param)* {
   proxy["skip-cert-verify"] = toBool(params["allowInsecure"]);
   proxy.sni = params["sni"] || params["peer"];
+  proxy['client-fingerprint'] = params.fp;
+  proxy.alpn = params.alpn ? decodeURIComponent(params.alpn).split(',') : undefined;
 
   if (toBool(params["ws"])) {
     proxy.network = "ws";
@@ -89,12 +91,29 @@ params = "/"? "?" head:param tail:("&"@param)* {
   }
   
   if (params["type"]) {
+    let httpupgrade
     proxy.network = params["type"]
-    if (params["path"]) {
-      $set(proxy, proxy.network+"-opts.path", decodeURIComponent(params["path"]));  
+    if(proxy.network === 'httpupgrade') {
+      proxy.network = 'ws'
+      httpupgrade = true
     }
-    if (params["host"]) {
-      $set(proxy, proxy.network+"-opts.headers.Host", decodeURIComponent(params["host"])); 
+    if (['grpc'].includes(proxy.network)) {
+        proxy[proxy.network + '-opts'] = {
+            'grpc-service-name': params["serviceName"],
+            '_grpc-type': params["mode"],
+            '_grpc-authority': params["authority"],
+        };
+    } else {
+      if (params["path"]) {
+        $set(proxy, proxy.network+"-opts.path", decodeURIComponent(params["path"]));  
+      }
+      if (params["host"]) {
+        $set(proxy, proxy.network+"-opts.headers.Host", decodeURIComponent(params["host"])); 
+      }
+      if (httpupgrade) {
+        $set(proxy, proxy.network+"-opts.v2ray-http-upgrade", true); 
+        $set(proxy, proxy.network+"-opts.v2ray-http-upgrade-fast-open", true); 
+      }
     }
   }
 

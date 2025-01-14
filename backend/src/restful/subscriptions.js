@@ -6,7 +6,11 @@ import {
 } from './errors';
 import { deleteByName, findByName, updateByName } from '@/utils/database';
 import { SUBS_KEY, COLLECTIONS_KEY, ARTIFACTS_KEY } from '@/constants';
-import { getFlowHeaders, parseFlowHeaders } from '@/utils/flow';
+import {
+    getFlowHeaders,
+    parseFlowHeaders,
+    getRmainingDays,
+} from '@/utils/flow';
 import { success, failed } from './response';
 import $ from '@/core/app';
 
@@ -30,6 +34,11 @@ export default function register($app) {
 async function getFlowInfo(req, res) {
     let { name } = req.params;
     name = decodeURIComponent(name);
+    let { url } = req.query;
+    if (url) {
+        url = decodeURIComponent(url);
+        $.info(`指定远程订阅 URL: ${url}`);
+    }
     const allSubs = $.read(SUBS_KEY);
     const sub = findByName(allSubs, name);
     if (!sub) {
@@ -43,20 +52,107 @@ async function getFlowInfo(req, res) {
         );
         return;
     }
-    if (sub.source === 'local') {
-        failed(
-            res,
-            new RequestInvalidError(
-                'NO_FLOW_INFO',
-                'N/A',
-                `Local subscription ${name} has no flow information!`,
-            ),
-        );
+    if (
+        sub.source === 'local' &&
+        !['localFirst', 'remoteFirst'].includes(sub.mergeSources)
+    ) {
+        if (sub.subUserinfo) {
+            let subUserInfo;
+            if (/^https?:\/\//.test(sub.subUserinfo)) {
+                try {
+                    subUserInfo = await getFlowHeaders(
+                        undefined,
+                        undefined,
+                        undefined,
+                        sub.proxy,
+                        sub.subUserinfo,
+                    );
+                } catch (e) {
+                    $.error(
+                        `订阅 ${name} 使用自定义流量链接 ${
+                            sub.subUserinfo
+                        } 获取流量信息时发生错误: ${JSON.stringify(e)}`,
+                    );
+                }
+            } else {
+                subUserInfo = sub.subUserinfo;
+            }
+            try {
+                success(res, {
+                    ...parseFlowHeaders(subUserInfo),
+                });
+            } catch (e) {
+                $.error(
+                    `Failed to parse flow info for local subscription ${name}: ${
+                        e.message ?? e
+                    }`,
+                );
+                failed(
+                    res,
+                    new RequestInvalidError(
+                        'NO_FLOW_INFO',
+                        'N/A',
+                        `Failed to parse flow info`,
+                    ),
+                );
+            }
+        } else {
+            failed(
+                res,
+                new RequestInvalidError(
+                    'NO_FLOW_INFO',
+                    'N/A',
+                    `Local subscription ${name} has no flow information!`,
+                ),
+            );
+        }
         return;
     }
     try {
-        const flowHeaders = await getFlowHeaders(sub.url);
-        if (!flowHeaders) {
+        url =
+            `${url || sub.url}`
+                .split(/[\r\n]+/)
+                .map((i) => i.trim())
+                .filter((i) => i.length)?.[0] || '';
+
+        let $arguments = {};
+        const rawArgs = url.split('#');
+        url = url.split('#')[0];
+        if (rawArgs.length > 1) {
+            try {
+                // 支持 `#${encodeURIComponent(JSON.stringify({arg1: "1"}))}`
+                $arguments = JSON.parse(decodeURIComponent(rawArgs[1]));
+            } catch (e) {
+                for (const pair of rawArgs[1].split('&')) {
+                    const key = pair.split('=')[0];
+                    const value = pair.split('=')[1];
+                    // 部分兼容之前的逻辑 const value = pair.split('=')[1] || true;
+                    $arguments[key] =
+                        value == null || value === ''
+                            ? true
+                            : decodeURIComponent(value);
+                }
+            }
+        }
+        if ($arguments.noFlow) {
+            failed(
+                res,
+                new RequestInvalidError(
+                    'NO_FLOW_INFO',
+                    'N/A',
+                    `Subscription ${name}: noFlow`,
+                ),
+            );
+            return;
+        }
+        const flowHeaders = await getFlowHeaders(
+            $arguments?.insecure ? `${url}#insecure` : url,
+            $arguments.flowUserAgent,
+            undefined,
+            sub.proxy,
+            $arguments.flowUrl,
+        );
+        if (!flowHeaders && !sub.subUserinfo) {
             failed(
                 res,
                 new InternalServerError(
@@ -67,8 +163,56 @@ async function getFlowInfo(req, res) {
             );
             return;
         }
-
-        success(res, parseFlowHeaders(flowHeaders));
+        try {
+            const remainingDays = getRmainingDays({
+                resetDay: $arguments.resetDay,
+                startDate: $arguments.startDate,
+                cycleDays: $arguments.cycleDays,
+            });
+            let subUserInfo;
+            if (/^https?:\/\//.test(sub.subUserinfo)) {
+                try {
+                    subUserInfo = await getFlowHeaders(
+                        undefined,
+                        undefined,
+                        undefined,
+                        sub.proxy,
+                        sub.subUserinfo,
+                    );
+                } catch (e) {
+                    $.error(
+                        `订阅 ${name} 使用自定义流量链接 ${
+                            sub.subUserinfo
+                        } 获取流量信息时发生错误: ${JSON.stringify(e)}`,
+                    );
+                }
+            } else {
+                subUserInfo = sub.subUserinfo;
+            }
+            const result = {
+                ...parseFlowHeaders(
+                    [subUserInfo, flowHeaders].filter((i) => i).join('; '),
+                ),
+            };
+            if (remainingDays != null) {
+                result.remainingDays = remainingDays;
+            }
+            success(res, result);
+        } catch (e) {
+            $.error(
+                `Failed to parse flow info for local subscription ${name}: ${
+                    e.message ?? e
+                }`,
+            );
+            failed(
+                res,
+                new RequestInvalidError(
+                    'NO_FLOW_INFO',
+                    'N/A',
+                    `Failed to parse flow info`,
+                ),
+            );
+        }
     } catch (err) {
         failed(
             res,
@@ -111,11 +255,21 @@ function createSubscription(req, res) {
 
 function getSubscription(req, res) {
     let { name } = req.params;
+    let { raw } = req.query;
     name = decodeURIComponent(name);
     const allSubs = $.read(SUBS_KEY);
     const sub = findByName(allSubs, name);
     if (sub) {
-        success(res, sub);
+        if (raw) {
+            res.set('content-type', 'application/json')
+                .set(
+                    'content-disposition',
+                    `attachment; filename="${encodeURIComponent(name)}.json"`,
+                )
+                .send(JSON.stringify(sub));
+        } else {
+            success(res, sub);
+        }
     } else {
         failed(
             res,

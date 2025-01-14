@@ -1,18 +1,29 @@
 import { deleteByName, findByName, updateByName } from '@/utils/database';
+import { getFlowHeaders } from '@/utils/flow';
 import { FILES_KEY } from '@/constants';
 import { failed, success } from '@/restful/response';
 import $ from '@/core/app';
-import { RequestInvalidError, ResourceNotFoundError } from '@/restful/errors';
+import {
+    RequestInvalidError,
+    ResourceNotFoundError,
+    InternalServerError,
+} from '@/restful/errors';
+import { produceArtifact } from '@/restful/sync';
 
 export default function register($app) {
     if (!$.read(FILES_KEY)) $.write([], FILES_KEY);
+
+    $app.get('/share/file/:name', getFile);
 
     $app.route('/api/file/:name')
         .get(getFile)
         .patch(updateFile)
         .delete(deleteFile);
 
+    $app.route('/api/wholeFile/:name').get(getWholeFile);
+
     $app.route('/api/files').get(getAllFiles).post(createFile).put(replaceFile);
+    $app.route('/api/wholeFiles').get(getAllWholeFiles);
 }
 
 // file API
@@ -37,13 +48,170 @@ function createFile(req, res) {
     success(res, file, 201);
 }
 
-function getFile(req, res) {
+async function getFile(req, res) {
     let { name } = req.params;
+    name = decodeURIComponent(name);
+
+    $.info(`正在下载文件：${name}`);
+    let {
+        url,
+        subInfoUrl,
+        subInfoUserAgent,
+        ua,
+        content,
+        mergeSources,
+        ignoreFailedRemoteFile,
+        proxy,
+        noCache,
+    } = req.query;
+    let $options = {};
+    if (req.query.$options) {
+        try {
+            // 支持 `#${encodeURIComponent(JSON.stringify({arg1: "1"}))}`
+            $options = JSON.parse(decodeURIComponent(req.query.$options));
+        } catch (e) {
+            for (const pair of req.query.$options.split('&')) {
+                const key = pair.split('=')[0];
+                const value = pair.split('=')[1];
+                // 部分兼容之前的逻辑 const value = pair.split('=')[1] || true;
+                $options[key] =
+                    value == null || value === ''
+                        ? true
+                        : decodeURIComponent(value);
+            }
+        }
+        $.info(`传入 $options: ${JSON.stringify($options)}`);
+    }
+    if (url) {
+        url = decodeURIComponent(url);
+        $.info(`指定远程文件 URL: ${url}`);
+    }
+    if (proxy) {
+        proxy = decodeURIComponent(proxy);
+        $.info(`指定远程订阅使用代理/策略 proxy: ${proxy}`);
+    }
+    if (ua) {
+        ua = decodeURIComponent(ua);
+        $.info(`指定远程文件 User-Agent: ${ua}`);
+    }
+    if (subInfoUrl) {
+        subInfoUrl = decodeURIComponent(subInfoUrl);
+        $.info(`指定获取流量的 subInfoUrl: ${subInfoUrl}`);
+    }
+    if (subInfoUserAgent) {
+        subInfoUserAgent = decodeURIComponent(subInfoUserAgent);
+        $.info(`指定获取流量的 subInfoUserAgent: ${subInfoUserAgent}`);
+    }
+    if (content) {
+        content = decodeURIComponent(content);
+        $.info(`指定本地文件: ${content}`);
+    }
+    if (mergeSources) {
+        mergeSources = decodeURIComponent(mergeSources);
+        $.info(`指定合并来源: ${mergeSources}`);
+    }
+    if (ignoreFailedRemoteFile != null && ignoreFailedRemoteFile !== '') {
+        ignoreFailedRemoteFile = decodeURIComponent(ignoreFailedRemoteFile);
+        $.info(`指定忽略失败的远程文件: ${ignoreFailedRemoteFile}`);
+    }
+    if (noCache) {
+        $.info(`指定不使用缓存: ${noCache}`);
+    }
+
+    const allFiles = $.read(FILES_KEY);
+    const file = findByName(allFiles, name);
+    if (file) {
+        try {
+            const output = await produceArtifact({
+                type: 'file',
+                name,
+                url,
+                ua,
+                content,
+                mergeSources,
+                ignoreFailedRemoteFile,
+                $options,
+                proxy,
+                noCache,
+            });
+
+            try {
+                subInfoUrl = subInfoUrl || file.subInfoUrl;
+                if (subInfoUrl) {
+                    // forward flow headers
+                    const flowInfo = await getFlowHeaders(
+                        subInfoUrl,
+                        subInfoUserAgent || file.subInfoUserAgent,
+                        undefined,
+                        proxy || file.proxy,
+                    );
+                    if (flowInfo) {
+                        res.set('subscription-userinfo', flowInfo);
+                    }
+                }
+            } catch (err) {
+                $.error(
+                    `文件 ${name} 获取流量信息时发生错误: ${JSON.stringify(
+                        err,
+                    )}`,
+                );
+            }
+            if (file.download) {
+                res.set(
+                    'Content-Disposition',
+                    `attachment; filename*=UTF-8''${encodeURIComponent(
+                        file.displayName || file.name,
+                    )}`,
+                );
+            }
+            res.set('Content-Type', 'text/plain; charset=utf-8').send(
+                output ?? '',
+            );
+        } catch (err) {
+            $.notify(
+                `🌍 Sub-Store 下载文件失败`,
+                `❌ 无法下载文件：${name}！`,
+                `🤔 原因：${err.message ?? err}`,
+            );
+            $.error(err.message ?? err);
+            failed(
+                res,
+                new InternalServerError(
+                    'INTERNAL_SERVER_ERROR',
+                    `Failed to download file: ${name}`,
+                    `Reason: ${err.message ?? err}`,
+                ),
+            );
+        }
+    } else {
+        $.error(`🌍 Sub-Store 下载文件失败\n❌ 未找到文件：${name}！`);
+        failed(
+            res,
+            new ResourceNotFoundError(
+                'RESOURCE_NOT_FOUND',
+                `File ${name} does not exist!`,
+            ),
+            404,
+        );
+    }
+}
+function getWholeFile(req, res) {
+    let { name } = req.params;
+    let { raw } = req.query;
     name = decodeURIComponent(name);
     const allFiles = $.read(FILES_KEY);
     const file = findByName(allFiles, name);
     if (file) {
-        res.status(200).json(file.content);
+        if (raw) {
+            res.set('content-type', 'application/json')
+                .set(
+                    'content-disposition',
+                    `attachment; filename="${encodeURIComponent(name)}.json"`,
+                )
+                .send(JSON.stringify(file));
+        } else {
+            success(res, file);
+        }
     } else {
         failed(
             res,
@@ -100,6 +268,11 @@ function getAllFiles(req, res) {
         res, // eslint-disable-next-line no-unused-vars
         allFiles.map(({ content, ...rest }) => rest),
     );
+}
+
+function getAllWholeFiles(req, res) {
+    const allFiles = $.read(FILES_KEY);
+    success(res, allFiles);
 }
 
 function replaceFile(req, res) {
