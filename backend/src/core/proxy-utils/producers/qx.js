@@ -3,7 +3,8 @@ import { isPresent, Result } from './utils';
 const targetPlatform = 'QX';
 
 export default function QX_Producer() {
-    const produce = (proxy) => {
+    // eslint-disable-next-line no-unused-vars
+    const produce = (proxy, type, opts = {}) => {
         switch (proxy.type) {
             case 'ss':
                 return shadowsocks(proxy);
@@ -17,6 +18,8 @@ export default function QX_Producer() {
                 return http(proxy);
             case 'socks5':
                 return socks5(proxy);
+            case 'vless':
+                return vless(proxy);
         }
         throw new Error(
             `Platform ${targetPlatform} does not support proxy type: ${proxy.type}`,
@@ -29,7 +32,36 @@ function shadowsocks(proxy) {
     const result = new Result(proxy);
     const append = result.append.bind(result);
     const appendIfPresent = result.appendIfPresent.bind(result);
-
+    if (!proxy.cipher) {
+        proxy.cipher = 'none';
+    }
+    if (
+        ![
+            'none',
+            'rc4-md5',
+            'rc4-md5-6',
+            'aes-128-cfb',
+            'aes-192-cfb',
+            'aes-256-cfb',
+            'aes-128-ctr',
+            'aes-192-ctr',
+            'aes-256-ctr',
+            'bf-cfb',
+            'cast5-cfb',
+            'des-cfb',
+            'rc2-cfb',
+            'salsa20',
+            'chacha20',
+            'chacha20-ietf',
+            'aes-128-gcm',
+            'aes-192-gcm',
+            'aes-256-gcm',
+            'chacha20-ietf-poly1305',
+            'xchacha20-ietf-poly1305',
+        ].includes(proxy.cipher)
+    ) {
+        throw new Error(`cipher ${proxy.cipher} is not supported`);
+    }
     append(`shadowsocks=${proxy.server}:${proxy.port}`);
     append(`,method=${proxy.cipher}`);
     append(`,password=${proxy.password}`);
@@ -306,6 +338,105 @@ function vmess(proxy) {
         append(`,aead=${proxy.aead}`);
     } else {
         append(`,aead=${proxy.alterId === 0}`);
+    }
+
+    // tfo
+    appendIfPresent(`,fast-open=${proxy.tfo}`, 'tfo');
+
+    // udp
+    appendIfPresent(`,udp-relay=${proxy.udp}`, 'udp');
+
+    // server_check_url
+    result.appendIfPresent(
+        `,server_check_url=${proxy['test-url']}`,
+        'test-url',
+    );
+
+    // tag
+    append(`,tag=${proxy.name}`);
+
+    return result.toString();
+}
+function vless(proxy) {
+    if (typeof proxy.flow !== 'undefined' || proxy['reality-opts']) {
+        throw new Error(`VLESS XTLS/REALITY is not supported`);
+    }
+
+    const result = new Result(proxy);
+    const append = result.append.bind(result);
+    const appendIfPresent = result.appendIfPresent.bind(result);
+
+    append(`vless=${proxy.server}:${proxy.port}`);
+
+    // The method field for vless should be none.
+    let cipher = 'none';
+    // if (proxy.cipher === 'auto') {
+    //     cipher = 'chacha20-ietf-poly1305';
+    // } else {
+    //     cipher = proxy.cipher;
+    // }
+    append(`,method=${cipher}`);
+
+    append(`,password=${proxy.uuid}`);
+
+    // obfs
+    if (needTls(proxy)) {
+        proxy.tls = true;
+    }
+    if (isPresent(proxy, 'network')) {
+        if (proxy.network === 'ws') {
+            if (proxy.tls) append(`,obfs=wss`);
+            else append(`,obfs=ws`);
+        } else if (proxy.network === 'http') {
+            append(`,obfs=http`);
+        } else if (!['tcp'].includes(proxy.network)) {
+            throw new Error(`network ${proxy.network} is unsupported`);
+        }
+        let transportPath = proxy[`${proxy.network}-opts`]?.path;
+        let transportHost = proxy[`${proxy.network}-opts`]?.headers?.Host;
+        appendIfPresent(
+            `,obfs-uri=${
+                Array.isArray(transportPath) ? transportPath[0] : transportPath
+            }`,
+            `${proxy.network}-opts.path`,
+        );
+        appendIfPresent(
+            `,obfs-host=${
+                Array.isArray(transportHost) ? transportHost[0] : transportHost
+            }`,
+            `${proxy.network}-opts.headers.Host`,
+        );
+    } else {
+        // over-tls
+        if (proxy.tls) append(`,obfs=over-tls`);
+    }
+
+    if (needTls(proxy)) {
+        appendIfPresent(
+            `,tls-pubkey-sha256=${proxy['tls-pubkey-sha256']}`,
+            'tls-pubkey-sha256',
+        );
+        appendIfPresent(`,tls-alpn=${proxy['tls-alpn']}`, 'tls-alpn');
+        appendIfPresent(
+            `,tls-no-session-ticket=${proxy['tls-no-session-ticket']}`,
+            'tls-no-session-ticket',
+        );
+        appendIfPresent(
+            `,tls-no-session-reuse=${proxy['tls-no-session-reuse']}`,
+            'tls-no-session-reuse',
+        );
+        // tls fingerprint
+        appendIfPresent(
+            `,tls-cert-sha256=${proxy['tls-fingerprint']}`,
+            'tls-fingerprint',
+        );
+
+        // tls verification
+        appendIfPresent(
+            `,tls-verification=${!proxy['skip-cert-verify']}`,
+            'skip-cert-verify',
+        );
+        appendIfPresent(`,tls-host=${proxy.sni}`, 'sni');
     }
 
     // tfo

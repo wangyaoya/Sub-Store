@@ -1,5 +1,6 @@
-import { safeLoad } from 'static-js-yaml';
+import { safeLoad } from '@/utils/yaml';
 import { Base64 } from 'js-base64';
+import $ from '@/core/app';
 
 function HTML() {
     const name = 'HTML';
@@ -22,14 +23,28 @@ function Base64Encoded() {
         'aHR0c', // htt
         'dmxlc3M=', // vless
         'aHlzdGVyaWEy', // hysteria2
+        'aHkyOi8v', // hy2://
+        'd2lyZWd1YXJkOi8v', // wireguard://
+        'd2c6Ly8=', // wg://
+        'dHVpYzovLw==', // tuic://
     ];
 
     const test = function (raw) {
-        return keys.some((k) => raw.indexOf(k) !== -1);
+        return (
+            !/^\w+:\/\/\w+/im.test(raw) &&
+            keys.some((k) => raw.indexOf(k) !== -1)
+        );
     };
     const parse = function (raw) {
-        raw = Base64.decode(raw);
-        return raw;
+        const decoded = Base64.decode(raw);
+        if (!/^\w+(:\/\/|\s*?=\s*?)\w+/m.test(decoded)) {
+            $.error(
+                `Base64 Pre-processor error: decoded line does not start with protocol`,
+            );
+            return raw;
+        }
+
+        return decoded;
     };
     return { name, test, parse };
 }
@@ -37,12 +52,52 @@ function Base64Encoded() {
 function Clash() {
     const name = 'Clash Pre-processor';
     const test = function (raw) {
-        return /proxies/.test(raw);
+        if (!/proxies/.test(raw)) return false;
+        const content = safeLoad(raw);
+        return content.proxies && Array.isArray(content.proxies);
     };
-    const parse = function (raw) {
+    const parse = function (raw, includeProxies) {
         // Clash YAML format
-        const proxies = safeLoad(raw).proxies;
-        return proxies.map((p) => JSON.stringify(p)).join('\n');
+
+        // 防止 VLESS节点 reality-opts 选项中的 short-id 被解析成 Infinity
+        // 匹配 short-id 冒号后面的值(包含空格和引号)
+        const afterReplace = raw.replace(
+            /short-id:([ ]*[^,\n}]*)/g,
+            (matched, value) => {
+                const afterTrim = value.trim();
+
+                // 为空
+                if (!afterTrim || afterTrim === '') {
+                    return 'short-id: ""';
+                }
+
+                // 是否被引号包裹
+                if (/^(['"]).*\1$/.test(afterTrim)) {
+                    return `short-id: ${afterTrim}`;
+                } else {
+                    return `short-id: "${afterTrim}"`;
+                }
+            },
+        );
+
+        const {
+            proxies,
+            'global-client-fingerprint': globalClientFingerprint,
+        } = safeLoad(afterReplace);
+        return (
+            (includeProxies ? 'proxies:\n' : '') +
+            proxies
+                .map((p) => {
+                    // https://github.com/MetaCubeX/mihomo/blob/Alpha/docs/config.yaml#L73C1-L73C26
+                    if (globalClientFingerprint && !p['client-fingerprint']) {
+                        p['client-fingerprint'] = globalClientFingerprint;
+                    }
+                    return `${includeProxies ? '  - ' : ''}${JSON.stringify(
+                        p,
+                    )}\n`;
+                })
+                .join('')
+        );
     };
     return { name, test, parse };
 }
@@ -105,4 +160,4 @@ function FullConfig() {
     return { name, test, parse };
 }
 
-export default [HTML(), Base64Encoded(), Clash(), SSD(), FullConfig()];
+export default [HTML(), Clash(), Base64Encoded(), SSD(), FullConfig()];

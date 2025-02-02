@@ -38,7 +38,7 @@ const grammars = String.raw`
     }
 }
 
-start = (trojan/shadowsocks/vmess/http/socks5) {
+start = (trojan/shadowsocks/vmess/vless/http/socks5) {
     return proxy
 }
 
@@ -50,8 +50,11 @@ trojan = "trojan" equals address
 
 shadowsocks = "shadowsocks" equals address
     (password/method/obfs_ssr/obfs_ss/obfs_host/obfs_uri/ssr_protocol/ssr_protocol_param/tls_pubkey_sha256/tls_alpn/tls_no_session_ticket/tls_no_session_reuse/tls_fingerprint/tls_verification/udp_relay/udp_over_tcp/fast_open/tag/server_check_url/others)* {
-    if (proxy.protocol) {
+    if (proxy.protocol || proxy.type === "ssr") {
         proxy.type = "ssr";
+        if (!proxy.protocol) {
+            proxy.protocol = "origin";
+        }
         // handle ssr obfs
         if (obfs.host) proxy["obfs-param"] = obfs.host;
         if (obfs.type) proxy.obfs = obfs.type;
@@ -88,6 +91,13 @@ vmess = "vmess" equals address
     } else {
         proxy.alterId = proxy.alterId || 0;
     }
+    handleObfs();
+}
+
+vless = "vless" equals address
+    (uuid/method/over_tls/tls_host/tls_pubkey_sha256/tls_alpn/tls_no_session_ticket/tls_no_session_reuse/tls_fingerprint/tls_verification/tag/obfs/obfs_host/obfs_uri/udp_relay/udp_over_tcp/fast_open/aead/server_check_url/others)* {
+    proxy.type = "vless";
+    proxy.cipher = proxy.cipher || "none";
     handleObfs();
 }
 
@@ -142,7 +152,7 @@ uuid = comma "password" equals uuid:[^=,]+ { proxy.uuid = uuid.join("").trim(); 
 method = comma "method" equals cipher:cipher { 
     proxy.cipher = cipher;
 };
-cipher = ("aes-128-gcm"/"aes-192-gcm"/"aes-256-gcm"/"aes-128-cfb"/"aes-192-cfb"/"aes-256-cfb"/"aes-128-ctr"/"aes-192-ctr"/"aes-256-ctr"/"rc4-md5"/"xchacha20-ietf-poly1305"/"chacha20-ietf-poly1305"/"chacha20-ietf"/"chacha20-poly1305"/"chacha20"/"none");
+cipher = ("aes-128-cfb"/"aes-128-ctr"/"aes-128-gcm"/"aes-192-cfb"/"aes-192-ctr"/"aes-192-gcm"/"aes-256-cfb"/"aes-256-ctr"/"aes-256-gcm"/"bf-cfb"/"cast5-cfb"/"chacha20-ietf-poly1305"/"chacha20-ietf"/"chacha20-poly1305"/"chacha20"/"des-cfb"/"none"/"rc2-cfb"/"rc4-md5-6"/"rc4-md5"/"salsa20"/"xchacha20-ietf-poly1305");
 aead = comma "aead" equals flag:bool { proxy.aead = flag; }
 
 udp_relay = comma "udp-relay" equals flag:bool { proxy.udp = flag; }
@@ -165,7 +175,7 @@ tls_no_session_reuse = comma "tls-no-session-reuse" equals flag:bool {
 }
 
 obfs_ss = comma "obfs" equals type:("http"/"tls"/"wss"/"ws"/"over-tls") { obfs.type = type; return type; }
-obfs_ssr = comma "obfs" equals type:("plain"/"http_simple"/"http_post"/"random_head"/"tls1.2_ticket_auth"/"tls1.2_ticket_fastauth") { obfs.type = type; return type; }
+obfs_ssr = comma "obfs" equals type:("plain"/"http_simple"/"http_post"/"random_head"/"tls1.2_ticket_auth"/"tls1.2_ticket_fastauth") { proxy.type = "ssr"; obfs.type = type; return type; }
 obfs = comma "obfs" equals type:("wss"/"ws"/"over-tls"/"http") { obfs.type = type; return type; };
 
 obfs_host = comma "obfs-host" equals host:domain { obfs.host = host; }

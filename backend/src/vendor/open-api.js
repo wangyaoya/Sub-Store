@@ -6,6 +6,9 @@ const isNode = eval(`typeof process !== "undefined"`); // eval is needed in orde
 const isStash =
     'undefined' !== typeof $environment && $environment['stash-version'];
 const isShadowRocket = 'undefined' !== typeof $rocket;
+const isEgern = 'object' == typeof egern;
+const isLanceX = 'undefined' != typeof $native;
+const isGUIforCores = typeof $Plugins !== 'undefined';
 
 export class OpenAPI {
     constructor(name = 'untitled', debug = false) {
@@ -46,7 +49,10 @@ export class OpenAPI {
             this.cache = JSON.parse($prefs.valueForKey(this.name) || '{}');
         if (isLoon || isSurge)
             this.cache = JSON.parse($persistentStore.read(this.name) || '{}');
-
+        if (isGUIforCores)
+            this.cache = JSON.parse(
+                $Plugins.SubStoreCache.get(this.name) || '{}',
+            );
         if (isNode) {
             // create a json for root cache
             const basePath =
@@ -84,6 +90,7 @@ export class OpenAPI {
         const data = JSON.stringify(this.cache, null, 2);
         if (isQX) $prefs.setValueForKey(data, this.name);
         if (isLoon || isSurge) $persistentStore.write(data, this.name);
+        if (isGUIforCores) $Plugins.SubStoreCache.set(this.name, data);
         if (isNode) {
             const basePath =
                 eval('process.env.SUB_STORE_DATA_BASE_PATH') || '.';
@@ -116,6 +123,9 @@ export class OpenAPI {
             if (isNode) {
                 this.root[key] = data;
             }
+            if (isGUIforCores) {
+                return $Plugins.SubStoreCache.set(key, data);
+            }
         } else {
             this.cache[key] = data;
         }
@@ -135,6 +145,9 @@ export class OpenAPI {
             if (isNode) {
                 return this.root[key];
             }
+            if (isGUIforCores) {
+                return $Plugins.SubStoreCache.get(key);
+            }
         } else {
             return this.cache[key];
         }
@@ -152,6 +165,9 @@ export class OpenAPI {
             }
             if (isNode) {
                 delete this.root[key];
+            }
+            if (isGUIforCores) {
+                return $Plugins.SubStoreCache.remove(key);
             }
         } else {
             delete this.cache[key];
@@ -191,6 +207,35 @@ export class OpenAPI {
                 (openURL ? `\n点击跳转: ${openURL}` : '') +
                 (mediaURL ? `\n多媒体: ${mediaURL}` : '');
             console.log(`${title}\n${subtitle}\n${content_}\n\n`);
+
+            let push = eval('process.env.SUB_STORE_PUSH_SERVICE');
+            if (push) {
+                const url = push
+                    .replace(
+                        '[推送标题]',
+                        encodeURIComponent(title || 'Sub-Store'),
+                    )
+                    .replace(
+                        '[推送内容]',
+                        encodeURIComponent(
+                            [subtitle, content_].map((i) => i).join('\n'),
+                        ),
+                    );
+                const $http = HTTP();
+                $http
+                    .get({ url })
+                    .then((resp) => {
+                        console.log(
+                            `[Push Service] URL: ${url}\nRES: ${resp.statusCode} ${resp.body}`,
+                        );
+                    })
+                    .catch((e) => {
+                        console.log(`[Push Service] URL: ${url}\nERROR: ${e}`);
+                    });
+            }
+        }
+        if (isGUIforCores) {
+            $Plugins.Notify(title, subtitle + '\n' + content);
         }
     }
 
@@ -212,7 +257,7 @@ export class OpenAPI {
     }
 
     done(value = {}) {
-        if (isQX || isLoon || isSurge) {
+        if (isQX || isLoon || isSurge || isGUIforCores) {
             $done(value);
         } else if (isNode) {
             if (typeof $context !== 'undefined') {
@@ -225,11 +270,21 @@ export class OpenAPI {
 }
 
 export function ENV() {
-    return { isQX, isLoon, isSurge, isNode, isStash, isShadowRocket };
+    return {
+        isQX,
+        isLoon,
+        isSurge,
+        isNode,
+        isStash,
+        isShadowRocket,
+        isEgern,
+        isLanceX,
+        isGUIforCores,
+    };
 }
 
 export function HTTP(defaultOptions = { baseURL: '' }) {
-    const { isQX, isLoon, isSurge, isNode } = ENV();
+    const { isQX, isLoon, isSurge, isNode, isGUIforCores } = ENV();
     const methods = [
         'GET',
         'POST',
@@ -279,31 +334,80 @@ export function HTTP(defaultOptions = { baseURL: '' }) {
                 url: options.url,
                 headers: options.headers,
                 body: options.body,
+                opts: options.opts,
             });
         } else if (isLoon || isSurge || isNode) {
             worker = new Promise((resolve, reject) => {
                 const request = isNode
                     ? eval("require('request')")
                     : $httpClient;
-                request[method.toLowerCase()](
-                    options,
-                    (err, response, body) => {
-                        if (err) reject(err);
-                        else
-                            resolve({
-                                statusCode:
-                                    response.status || response.statusCode,
-                                headers: response.headers,
-                                body,
-                            });
-                    },
-                );
+                const body = options.body;
+                const opts = JSON.parse(JSON.stringify(options));
+                opts.body = body;
+
+                if (!isNode && opts.timeout) {
+                    opts.timeout++;
+                    let unit = 'ms';
+                    // 这些客户端单位为 s
+                    if (isSurge || isStash || isShadowRocket) {
+                        opts.timeout = Math.ceil(opts.timeout / 1000);
+                        unit = 's';
+                    }
+                    // Loon 为 ms
+                    // console.log(`[httpClient timeout] ${opts.timeout}${unit}`);
+                }
+                request[method.toLowerCase()](opts, (err, response, body) => {
+                    // if (err) {
+                    //     console.log(err);
+                    // } else {
+                    //     console.log({
+                    //         statusCode:
+                    //             response.status || response.statusCode,
+                    //         headers: response.headers,
+                    //         body,
+                    //     });
+                    // }
+
+                    if (err) reject(err);
+                    else
+                        resolve({
+                            statusCode: response.status || response.statusCode,
+                            headers: response.headers,
+                            body,
+                        });
+                });
+            });
+        } else if (isGUIforCores) {
+            worker = new Promise(async (resolve, reject) => {
+                try {
+                    const response = await $Plugins.Requests({
+                        method,
+                        url: options.url,
+                        headers: options.headers,
+                        body: options.body,
+                        options: {
+                            Proxy: options.proxy,
+                            Timeout: options.timeout
+                                ? options.timeout / 1000
+                                : 15,
+                        },
+                    });
+                    resolve({
+                        statusCode: response.status,
+                        headers: response.headers,
+                        body: response.body,
+                    });
+                } catch (error) {
+                    reject(error);
+                }
             });
         }
 
         let timeoutid;
+
         const timer = timeout
             ? new Promise((_, reject) => {
+                  //   console.log(`[request timeout] ${timeout}ms`);
                   timeoutid = setTimeout(() => {
                       events.onTimeout();
                       return reject(
